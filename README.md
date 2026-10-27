@@ -1,8 +1,35 @@
-# CrashGuard ESP32-C3 Smart Helmet Prototype
+# CrashGuard Smart Helmet Firmware
 
-This repository contains a single-file Arduino firmware implementation for an ESP32-C3 Super Mini smart-helmet prototype. It performs MPU6050 motion monitoring, a cancellable emergency countdown, bounded GPS acquisition, queued SIM800L SMS attempts, persistent settings, and a local authenticated captive portal.
+This repository contains Arduino firmware for ESP32-C3 Super Mini and ESP32-WROOM-32 smart-helmet prototypes. It performs MPU6050 motion monitoring, a cancellable emergency countdown, bounded GPS acquisition, queued SIM800L SMS attempts, persistent settings, and a local authenticated captive portal.
 
-It also includes a standalone, compile-verified NodeMCU ESP8266 version at `SmartHelmetESP8266/SmartHelmetESP8266.ino`. The NodeMCU target is the default PlatformIO environment while the ESP32-C3 board is unavailable.
+It also includes a standalone NodeMCU ESP8266 version at `SmartHelmetESP8266/SmartHelmetESP8266.ino`. The NodeMCU target remains the default PlatformIO environment; select the environment matching the board you have.
+
+## ESP32-WROOM-32 board version
+
+The WROOM-32 target uses the common 30-pin ESP32 development-board pinout pictured by the user. It retains the same firmware, configuration, and captive portal as the ESP32-C3 version, with UART and I²C pins remapped for the classic ESP32. GPS uses UART2 on GPIO16/17 and GSM uses UART1 on GPIO26/27, leaving UART0 available for USB-to-serial logging.
+
+| Component | Module pin | ESP32-WROOM-32 GPIO | Direction | Notes |
+|---|---|---:|---|---|
+| MPU6050 | SDA | 21 | Bidirectional | I²C; pull-ups must go to 3.3 V |
+| MPU6050 | SCL | 22 | ESP → sensor | I²C clock |
+| NEO-6M | TX | 16 | GPS → ESP | GPS UART RX at 9600 baud |
+| NEO-6M | RX | 17 | ESP → GPS | GPS UART TX; normally unused |
+| SIM800L | TXD | 26 | GSM → ESP | UART RX; check modem logic level |
+| SIM800L | RXD | 27 | ESP → GSM | UART TX; level-shift if required by the modem |
+| Buzzer driver | IN/gate/base | 25 | ESP → driver | Active-high transistor/MOSFET driver; never connect a high-current buzzer directly |
+| Cancel button | Switch to GND | 33 | Input | Internal pull-up; hold for eight seconds during boot to reset the administrator password |
+| Power | VIN / 3.3V / GND | Board pins | — | Use the correct regulated supply for the dev board and peripherals |
+
+Build and upload with PlatformIO:
+
+```powershell
+platformio run -e esp32-wroom-32
+platformio run -e esp32-wroom-32 -t upload
+```
+
+Open the Serial Monitor at 115200 baud. This target uses the development board's USB-to-UART bridge; do not enable the ESP32-C3 native USB CDC setting. GPIO16/17 are suitable for the classic ESP32-WROOM module shown, but may be unavailable on other ESP32 module variants such as WROVER boards. Confirm the board revision and wiring before connecting peripherals.
+
+The ESP32 GPIOs are **not 5 V tolerant**. Verify that every sensor/UART signal presented to an ESP GPIO is at most 3.3 V. Power the SIM800L from a separate supply rated for its current bursts; do not power it from the ESP32 3.3 V pin. Connect all grounds together.
 
 ## Temporary NodeMCU ESP8266 version
 
@@ -42,9 +69,9 @@ The NodeMCU compilation completed successfully: global/static RAM 34,676 of 80,1
 
 > Safety boundary: this is an experimental competition prototype, not automotive, medical, PPE, or life-safety certified equipment. Do not drill, cut, glue into, or otherwise modify a helmet shell or energy-absorbing liner. Use controlled bench simulations—not deliberate crashes or dangerous road tests.
 
-## 1. Hardware assumptions and verification checklist
+## ESP32-C3 hardware assumptions and verification checklist
 
-The name “ESP32-C3 Super Mini” covers multiple seller revisions. This project provisionally targets the common board exposing GPIO0–10 and native USB. Before power-up:
+The name “ESP32-C3 Super Mini” covers multiple seller revisions. This project's C3 target provisionally uses the common board exposing GPIO0–10 and native USB. Before power-up:
 
 - Match the silkscreen to the seller’s schematic and continuity-check every proposed pin.
 - Confirm GPIO0, 1, 3, 4, 5, 6, 7, and 10 are exposed and not used by onboard hardware.
@@ -55,7 +82,7 @@ The name “ESP32-C3 Super Mini” covers multiple seller revisions. This projec
 - Verify the cellular carrier still operates compatible 2G GSM in the deployment area.
 - Use a protected quality 18650 cell, correctly fused wiring, and a power design rated for SIM800L current bursts. Do not prototype high-current battery paths on a solderless breadboard.
 
-## 2. Provisional pin-to-pin wiring
+## ESP32-C3 provisional pin-to-pin wiring
 
 ### Signals
 
@@ -106,14 +133,14 @@ An MT3608 is boost-only: it cannot lower a charged cell, regulate current, prote
 
 ## 3. Libraries and environment
 
-Recommended reproducible PlatformIO environment is in `platformio.ini`:
+Reproducible PlatformIO environments are in `platformio.ini`:
 
 - Espressif32 Platform 6.10.0 (Arduino core supplied by that platform)
 - Adafruit MPU6050 2.2.9 (and resolved Adafruit dependencies)
 - TinyGPSPlus 1.1.0
 - Built into Arduino-ESP32: WiFi, WebServer, DNSServer, Preferences, Wire, HardwareSerial, mbedTLS
 
-PlatformIO: install VS Code + PlatformIO, open this folder, then **Build** and **Upload**. Arduino IDE: install the Espressif ESP32 board package, “Adafruit MPU6050” 2.2.9 and “TinyGPSPlus” 1.1.0 with Library Manager; open `SmartHelmet/SmartHelmet.ino`; select an ESP32-C3 target matching the actual board; enable USB CDC at boot; compile before wiring modules.
+PlatformIO: install VS Code + PlatformIO and select `esp32-wroom-32` for the WROOM board or `esp32-c3-super-mini` for the C3 board before **Build** and **Upload**. Arduino IDE: install the Espressif ESP32 board package, “Adafruit MPU6050” 2.2.9 and “TinyGPSPlus” 1.1.0 with Library Manager; open `SmartHelmet/SmartHelmet.ino` and select the target matching the actual board. Enable USB CDC at boot for ESP32-C3 only. Compile before wiring modules.
 
 The source is [SmartHelmet/SmartHelmet.ino](SmartHelmet/SmartHelmet.ino). No credentials or phone numbers are compiled into it.
 

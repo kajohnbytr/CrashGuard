@@ -1,0 +1,147 @@
+CRASHGUARD - ESP32-WROOM-32 WIRING
+==================================
+
+Target: ESP32-WROOM-32 development board (classic ESP32, as pictured)
+Firmware environment: esp32-wroom-32
+Firmware build: platformio run -e esp32-wroom-32
+
+IMPORTANT
+---------
+- Verify the exact development-board pin labels before wiring.
+- ESP32 GPIO pins are 3.3 V only and are NOT 5 V tolerant.
+- Never connect a peripheral signal above 3.3 V to an ESP32 GPIO.
+- Disconnect power before changing wiring.
+- Connect all grounds together.
+- Do not power a bare SIM800L from the ESP32 3.3 V pin or directly from 5 V.
+- This prototype is not certified safety equipment. Test on a bench only.
+
+
+SIGNAL WIRING
+-------------
+
+ESP32-WROOM-32          PERIPHERAL
+------------------      -----------------------------------------
+GPIO 21                 MPU6050 SDA
+GPIO 22                 MPU6050 SCL
+3V3                     MPU6050 VCC (only if breakout supports 3.3 V)
+GND                     MPU6050 GND
+
+GPIO 16 (UART2 RX)      GPS module TX
+GPIO 17 (UART2 TX)      GPS module RX (optional; normally unused)
+3V3 or suitable rail    GPS module VCC (check the breakout specification)
+GND                     GPS module GND
+
+GPIO 26 (UART1 RX)      SIM800L TXD
+GPIO 27 (UART1 TX)      SIM800L RXD
+GND                     SIM800L GND
+
+GPIO 25                 Buzzer driver IN / transistor base resistor / MOSFET gate
+GND                     Buzzer driver ground
+
+GPIO 33                 One side of cancel button
+GND                     Other side of cancel button
+
+USB-to-serial bridge    ESP32 UART0 (GPIO 1 TX0 / GPIO 3 RX0)
+                        Reserved for programming and Serial Monitor.
+                        Do not attach the SIM800L to these pins.
+
+
+PIN-TO-PIN OVERVIEW
+-------------------
+
+   ESP32-WROOM-32                         MPU6050
+   +-------------+                       +--------+
+   | GPIO21      |---------------------->| SDA    |
+   | GPIO22      |---------------------->| SCL    |
+   | 3V3         |---------------------->| VCC*   |
+   | GND         |---------------------->| GND    |
+   +-------------+                       +--------+
+
+   ESP32-WROOM-32                         GPS MODULE
+   +-------------+                       +--------+
+   | GPIO16 RX2  |<----------------------| TX     |
+   | GPIO17 TX2  |---------------------->| RX*    |
+   | 3V3 / rail  |---------------------->| VCC*   |
+   | GND         |---------------------->| GND    |
+   +-------------+                       +--------+
+
+   ESP32-WROOM-32                         SIM800L
+   +-------------+                       +--------+
+   | GPIO26 RX1  |<----------------------| TXD    |
+   | GPIO27 TX1  |---------------------->| RXD*   |
+   | Separate    |                        | VCC    |
+   | GSM supply  |---------------------->|        |
+   | GND         |---------------------->| GND    |
+   +-------------+                       +--------+
+
+   ESP32-WROOM-32       DRIVER CIRCUIT
+   +-------------+     +---------------------------------------+
+   | GPIO25      |---->| Driver input (use suitable resistor) |
+   | GND         |---->| Driver GND and buzzer return          |
+   +-------------+     +-------------------+-------------------+
+                                           |
+                                      Buzzer/load
+                                      (driver-powered)
+
+   ESP32-WROOM-32       CANCEL BUTTON
+   +-------------+     +----------+
+   | GPIO33      |-----| switch   |----- GND
+   +-------------+     +----------+
+
+
+POWER AND LEVEL NOTES
+---------------------
+1. ESP32 development board:
+   Power by USB for initial bench setup, or use the board's documented VIN
+   input and voltage. Pin naming and accepted VIN voltage vary by board.
+   Do not apply 5 V to the 3V3 pin.
+
+2. MPU6050:
+   Use 3.3 V logic. Check the breakout board's documentation. I2C pull-ups
+   must go to 3.3 V, not 5 V.
+
+3. GPS:
+   Check its exact breakout-board power input requirements. Regardless of
+   GPS supply voltage, GPS TX into ESP32 GPIO16 must not exceed 3.3 V.
+   Add a level shifter/divider if required by the GPS board.
+
+4. SIM800L:
+   A bare SIM800L typically needs a dedicated, stable 3.4-4.4 V supply with
+   high current-burst capability (design for at least 2 A peaks). Carrier
+   boards differ; follow the exact module documentation.
+   Place suitable low-ESR bulk capacitance near the modem supply pins
+   (commonly 1000-2200 uF plus 100 nF, subject to the module design).
+   SIM800L TXD must be safe for a 3.3 V ESP32 input. Check its logic levels.
+   Level-shift ESP32 GPIO27 to SIM800L RXD if the module requires it.
+   Do not connect SIM800L VCC to ESP32 3V3 or an unverified 5 V rail.
+
+5. Buzzer:
+   GPIO25 is a logic-level control only. Use a transistor/MOSFET driver;
+   never power a high-current buzzer directly from the GPIO. For an inductive
+   load, use an appropriately rated flyback diode across the load.
+
+6. Ground:
+   Join ESP32 GND, sensor GND, GPS GND, GSM supply negative, and driver GND.
+   Use short, heavy wiring for the SIM800L supply/return. Keep GSM current
+   paths away from MPU6050 signal wiring.
+
+
+FIRST POWER-UP CHECKLIST
+------------------------
+[ ] Confirm every GPIO connection against the board silkscreen.
+[ ] Confirm no ESP32 input signal can exceed 3.3 V.
+[ ] Confirm I2C pull-ups terminate at 3.3 V.
+[ ] Confirm SIM800L supply voltage, current capacity, and polarity.
+[ ] Confirm all module grounds share a common reference.
+[ ] Initially leave SIM800L power disconnected; power the ESP32 and check
+    the sensor/GPS wiring first.
+[ ] Build and upload using the esp32-wroom-32 PlatformIO environment.
+[ ] Open Serial Monitor at 115200 baud. UART0 pins remain reserved for USB
+    programming and logs.
+
+The firmware's first-boot setup Wi-Fi network is "SmartHelmet-Setup".
+Open http://192.168.4.1/ while connected to that network.
+
+* "VCC" wiring depends on the exact breakout. Confirm its input range before
+  connecting power; do not assume modules with the same sensor chip are wired
+  identically.

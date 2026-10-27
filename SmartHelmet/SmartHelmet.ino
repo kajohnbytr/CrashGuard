@@ -1,14 +1,13 @@
 /*
- * CrashGuard Smart Helmet - ESP32-C3 / ESP8266 NodeMCU prototype firmware
- * Firmware 1.0.0 | configuration schema 1
+ * CrashGuard Smart Helmet - ESP32 / ESP8266 prototype firmware
+ * Firmware version is target-specific | configuration schema 1
  *
  * IMPORTANT: verify the actual board schematic and every breakout's voltage
- * requirements before power-up. The pin plan below avoids C3 strapping pins
- * GPIO2/8/9, native USB GPIO18/19, and flash GPIO12-17.
+ * requirements before power-up. The pin plan below avoids board-specific
+ * strapping pins, flash pins, and USB pins.
  *
- * Provisional signals: GSM RX/TX 0/1, GPS RX/TX 3/4, MPU SDA/SCL 5/6,
- * active-high transistor-driven buzzer 7, active-low cancel button 10.
- * Serial logging uses native USB CDC; enable "USB CDC On Boot".
+ * Pin assignments are selected by the PlatformIO target. ESP32-C3 uses
+ * native USB CDC; ESP32-WROOM-32 uses UART0 for USB-serial logging.
  */
 
 #include <Arduino.h>
@@ -42,6 +41,16 @@ static const uint8_t PIN_MPU_SDA = 4;  // D2
 static const uint8_t PIN_MPU_SCL = 5;  // D1
 static const uint8_t PIN_BUZZER = 13;  // D7, transistor driver input
 static const uint8_t PIN_CANCEL = 16;  // D0, switch to GND
+#elif defined(CRASHGUARD_ESP32_WROOM)
+static const char *FW_VERSION = "1.1.0-esp32-wroom-32";
+static const uint8_t PIN_GSM_RX = 26;  // ESP RX <- SIM800L TXD
+static const uint8_t PIN_GSM_TX = 27;  // ESP TX -> SIM800L RXD
+static const uint8_t PIN_GPS_RX = 16;  // ESP RX <- NEO-6M TX
+static const uint8_t PIN_GPS_TX = 17;  // ESP TX -> NEO-6M RX (normally unused)
+static const uint8_t PIN_MPU_SDA = 21;
+static const uint8_t PIN_MPU_SCL = 22;
+static const uint8_t PIN_BUZZER = 25;  // transistor/MOSFET driver input
+static const uint8_t PIN_CANCEL = 33;  // switch to GND, INPUT_PULLUP
 #else
 static const char *FW_VERSION = "1.0.0";
 static const uint8_t PIN_GSM_RX = 0;   // ESP RX <- SIM800L TXD (level-check module)
@@ -64,6 +73,9 @@ static const uint32_t SESSION_TTL_MS = 30UL * 60UL * 1000UL;
 #ifdef CRASHGUARD_ESP8266
 SoftwareSerial GPS_UART(PIN_GPS_RX, PIN_GPS_TX);
 #define GSM_UART Serial
+#elif defined(CRASHGUARD_ESP32_WROOM)
+HardwareSerial GPS_UART(2);
+HardwareSerial GSM_UART(1);
 #else
 HardwareSerial GPS_UART(0);
 HardwareSerial GSM_UART(1);
@@ -82,7 +94,7 @@ Preferences prefs;
 
 enum SystemState : uint8_t { BOOT, HARDWARE_CHECK, MONITORING, POSSIBLE_CRASH,
   COUNTDOWN, CANCELLED, ALERT_PENDING, GPS_ACQUISITION, SMS_SENDING,
-  ALERT_RESULT, FAULT };
+  ALERT_RESULT, FAULT };  
 enum SmsState : uint8_t { SMS_IDLE, SMS_AT, SMS_ECHO, SMS_TEXTMODE, SMS_NUMBER,
   SMS_BODY, SMS_WAIT_RESULT, SMS_NEXT, SMS_DONE, SMS_FAILED, DIAG_CPIN,
   DIAG_CREG, DIAG_CSQ, DIAG_COPS };
@@ -383,4 +395,3 @@ void setup(){
   changeState(t.mpuDetected?MONITORING:FAULT,t.mpuDetected?"ready":"sensor required");
 }
 void loop(){dns.processNextRequest();server.handleClient();pollGps();pollGsm();sampleMpu();updateCrashWorkflow();delay(1);}
-
