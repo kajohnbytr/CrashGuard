@@ -1,6 +1,5 @@
-#define CRASHGUARD_ESP8266 1
 /*
- * CrashGuard Smart Helmet - ESP32-C3 / ESP8266 NodeMCU prototype firmware
+ * CrashGuard Smart Helmet - ESP8266 NodeMCU firmware
  * Firmware 1.0.0 | configuration schema 1
  *
  * IMPORTANT: verify the actual board schematic and every breakout's voltage
@@ -13,19 +12,11 @@
  */
 
 #include <Arduino.h>
-#ifdef CRASHGUARD_ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <SoftwareSerial.h>
 #include <EEPROM.h>
 #include <bearssl/bearssl_hash.h>
-#else
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Preferences.h>
-#include <mbedtls/sha256.h>
-#include <esp_system.h>
-#endif
 #include <DNSServer.h>
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
@@ -33,7 +24,6 @@
 #include <TinyGPSPlus.h>
 
 // ---------- Identity, limits, and pin map ----------
-#ifdef CRASHGUARD_ESP8266
 static const char *FW_VERSION = "1.0.0-esp8266";
 static const uint8_t PIN_GSM_RX = 3;   // RX / USB bridge RX: ESP receives SIM800L TXD
 static const uint8_t PIN_GSM_TX = 1;   // TX / USB bridge TX: ESP sends to SIM800L RXD
@@ -43,17 +33,6 @@ static const uint8_t PIN_MPU_SDA = 4;  // D2
 static const uint8_t PIN_MPU_SCL = 5;  // D1
 static const uint8_t PIN_BUZZER = 13;  // D7, transistor driver input
 static const uint8_t PIN_CANCEL = 16;  // D0, switch to GND
-#else
-static const char *FW_VERSION = "1.0.0";
-static const uint8_t PIN_GSM_RX = 0;   // ESP RX <- SIM800L TXD (level-check module)
-static const uint8_t PIN_GSM_TX = 1;   // ESP TX -> SIM800L RXD (divider recommended)
-static const uint8_t PIN_GPS_RX = 3;   // ESP RX <- NEO-6M TX
-static const uint8_t PIN_GPS_TX = 4;   // ESP TX -> NEO-6M RX (normally unused)
-static const uint8_t PIN_MPU_SDA = 5;
-static const uint8_t PIN_MPU_SCL = 6;
-static const uint8_t PIN_BUZZER = 7;   // transistor/MOSFET input, never drive load directly
-static const uint8_t PIN_CANCEL = 10;  // switch to GND, INPUT_PULLUP
-#endif
 static const uint16_t CONFIG_SCHEMA = 1;
 static const uint8_t DNS_PORT = 53;
 static const uint8_t MAX_CONTACTS = 3;
@@ -62,24 +41,12 @@ static const uint32_t GPS_FRESH_MS = 120000;
 static const uint32_t GPS_ACQUIRE_MS = 30000;
 static const uint32_t SESSION_TTL_MS = 30UL * 60UL * 1000UL;
 
-#ifdef CRASHGUARD_ESP8266
 SoftwareSerial GPS_UART(PIN_GPS_RX, PIN_GPS_TX);
 #define GSM_UART Serial
-#else
-HardwareSerial GPS_UART(0);
-HardwareSerial GSM_UART(1);
-#endif
 Adafruit_MPU6050 mpu;
 TinyGPSPlus gps;
-#ifdef CRASHGUARD_ESP8266
 ESP8266WebServer server(80);
-#else
-WebServer server(80);
-#endif
 DNSServer dns;
-#ifndef CRASHGUARD_ESP8266
-Preferences prefs;
-#endif
 
 enum SystemState : uint8_t { BOOT, HARDWARE_CHECK, MONITORING, POSSIBLE_CRASH,
   COUNTDOWN, CANCELLED, ALERT_PENDING, GPS_ACQUISITION, SMS_SENDING,
@@ -145,28 +112,14 @@ String jsonEscape(String v) { v.replace("\\","\\\\"); v.replace("\"","\\\"");
   v.replace("\r","\\r"); v.replace("\n","\\n"); return v; }
 String randomHex(size_t bytes) { String out; out.reserve(bytes*2); char b[3];
   for(size_t i=0;i<bytes;i++){ 
-#ifdef CRASHGUARD_ESP8266
     uint8_t value=(uint8_t)ESP.random();
-#else
-    uint8_t value=(uint8_t)esp_random();
-#endif
     snprintf(b,sizeof(b),"%02x",value); out+=b; } return out; }
 String sha256(const String &input) { uint8_t hash[32];
-#ifdef CRASHGUARD_ESP8266
   br_sha256_context c; br_sha256_init(&c); br_sha256_update(&c,input.c_str(),input.length()); br_sha256_out(&c,hash);
-#else
-  mbedtls_sha256_context c;
-  mbedtls_sha256_init(&c); mbedtls_sha256_starts(&c,0);
-  mbedtls_sha256_update(&c,(const unsigned char*)input.c_str(),input.length());
-  mbedtls_sha256_finish(&c,hash); mbedtls_sha256_free(&c);
-#endif
   String out; char b[3];
   for(uint8_t x:hash){snprintf(b,sizeof(b),"%02x",x);out+=b;} return out; }
 void logEvent(const String &msg) { logs[logHead]={millis(),msg}; logHead=(logHead+1)%LOG_CAPACITY;
   if(logCount<LOG_CAPACITY) logCount++;
-#ifndef CRASHGUARD_ESP8266
-  Serial.println("["+String(millis())+"] "+msg);
-#endif
 }
 void setError(const String &e) { t.lastError=e; logEvent("FAULT: "+e); }
 void changeState(SystemState s, const String &reason) { state=s; stateSince=millis();
@@ -177,7 +130,6 @@ bool validPhone(const String &p) { if(p.length()<8 || p.length()>16) return fals
 float clampFloat(float v,float lo,float hi){return v<lo?lo:(v>hi?hi:v);} 
 
 // ---------- Persistence ----------
-#ifdef CRASHGUARD_ESP8266
 struct StoredContact { char name[31]; char phone[17]; uint8_t enabled; };
 struct StoredConfig {
   uint32_t magic; uint16_t schema; char deviceName[31]; char apSsid[33];
@@ -197,44 +149,6 @@ bool hasPassword(){readStored();return stored.passhash[0]!=0;}
 bool setPassword(const String &p){if(p.length()<10||p.length()>64)return false;if(!readStored())memset(&stored,0,sizeof(stored));String salt=randomHex(16),hash=sha256(salt+p);copyText(stored.salt,sizeof(stored.salt),salt);copyText(stored.passhash,sizeof(stored.passhash),hash);syncConfigToStored();writeStored();return true;}
 bool checkPassword(const String &p){if(!readStored()||!stored.passhash[0])return false;return sha256(String(stored.salt)+p)==String(stored.passhash);}
 void resetAdminPassword(){if(readStored()){memset(stored.salt,0,sizeof(stored.salt));memset(stored.passhash,0,sizeof(stored.passhash));writeStored();}}
-#else
-void loadConfig() {
-  prefs.begin("crashguard", true);
-  if(prefs.getUShort("schema",0)==CONFIG_SCHEMA) {
-    cfg.deviceName=prefs.getString("name",cfg.deviceName); cfg.apSsid=prefs.getString("ssid",cfg.apSsid);
-    cfg.accelThresholdG=prefs.getFloat("accel",cfg.accelThresholdG);
-    cfg.gyroThresholdDps=prefs.getFloat("gyro",cfg.gyroThresholdDps);
-    cfg.persistenceMs=prefs.getUShort("persist",cfg.persistenceMs);
-    cfg.countdownSec=prefs.getUShort("countdown",cfg.countdownSec);
-    cfg.sampleHz=prefs.getUShort("rate",cfg.sampleHz); cfg.cooldownSec=prefs.getUShort("cooldown",cfg.cooldownSec);
-    cfg.requireBoth=prefs.getBool("both",cfg.requireBoth); cfg.testMode=prefs.getBool("test",cfg.testMode);
-    cfg.calibrated=prefs.getBool("calibrated",false);
-    for(int i=0;i<3;i++){ cfg.accelOffset[i]=prefs.getFloat(("ao"+String(i)).c_str(),0);
-      cfg.gyroOffset[i]=prefs.getFloat(("go"+String(i)).c_str(),0); }
-    for(int i=0;i<MAX_CONTACTS;i++){ cfg.contacts[i].name=prefs.getString(("cn"+String(i)).c_str(),"");
-      cfg.contacts[i].phone=prefs.getString(("cp"+String(i)).c_str(),"");
-      cfg.contacts[i].enabled=prefs.getBool(("ce"+String(i)).c_str(),false); }
-  }
-  prefs.end();
-}
-void saveConfig() {
-  prefs.begin("crashguard",false); prefs.putUShort("schema",CONFIG_SCHEMA);
-  prefs.putString("name",cfg.deviceName); prefs.putString("ssid",cfg.apSsid);
-  prefs.putFloat("accel",cfg.accelThresholdG); prefs.putFloat("gyro",cfg.gyroThresholdDps);
-  prefs.putUShort("persist",cfg.persistenceMs); prefs.putUShort("countdown",cfg.countdownSec);
-  prefs.putUShort("rate",cfg.sampleHz); prefs.putUShort("cooldown",cfg.cooldownSec);
-  prefs.putBool("both",cfg.requireBoth); prefs.putBool("test",cfg.testMode); prefs.putBool("calibrated",cfg.calibrated);
-  for(int i=0;i<3;i++){prefs.putFloat(("ao"+String(i)).c_str(),cfg.accelOffset[i]);prefs.putFloat(("go"+String(i)).c_str(),cfg.gyroOffset[i]);}
-  for(int i=0;i<MAX_CONTACTS;i++){prefs.putString(("cn"+String(i)).c_str(),cfg.contacts[i].name);
-    prefs.putString(("cp"+String(i)).c_str(),cfg.contacts[i].phone);prefs.putBool(("ce"+String(i)).c_str(),cfg.contacts[i].enabled);}
-  prefs.end(); logEvent("Configuration saved");
-}
-bool hasPassword() { prefs.begin("crashguard",true); bool ok=prefs.isKey("passhash");prefs.end();return ok; }
-bool setPassword(const String &p) { if(p.length()<10||p.length()>64) return false; String salt=randomHex(16);
-  prefs.begin("crashguard",false);prefs.putString("salt",salt);prefs.putString("passhash",sha256(salt+p));prefs.end();return true; }
-bool checkPassword(const String &p){prefs.begin("crashguard",true);String s=prefs.getString("salt","");String h=prefs.getString("passhash","");prefs.end();return h.length()&&sha256(s+p)==h;}
-void resetAdminPassword(){prefs.begin("crashguard",false);prefs.remove("salt");prefs.remove("passhash");prefs.end();}
-#endif
 
 // ---------- Sensor, calibration, and detection ----------
 void sampleMpu() {
@@ -326,27 +240,24 @@ String statusJson(){uint32_t remain=state==COUNTDOWN&&millis()-stateSince<cfg.co
   s+=String("\"calibrationRunning\":")+(calibrationRunning?"true":"false")+",\"calibrationProgress\":"+String(calibrationSamples*100/500)+",";
   s+=String("\"gpsDetected\":")+(t.gpsDetected?"true":"false")+",\"gpsFix\":"+(t.gpsFix?"true":"false")+",\"lat\":"+String(t.lat,6)+",\"lng\":"+String(t.lng,6)+",\"satellites\":"+String(t.satellites)+",";
   s+="\"fixAge\":"+(t.lastGpsFixMs?String((millis()-t.lastGpsFixMs)/1000):"null")+",\"gsmDetected\":"+(t.gsmDetected?"true":"false")+",\"simReady\":"+(t.simReady?"true":"false")+",\"registered\":"+(t.registered?"true":"false")+",\"signal\":"+String(t.signal)+",\"operatorName\":\""+jsonEscape(t.operatorName)+"\",\"smsReady\":"+(t.smsReady?"true":"false")+",";
-  s+="\"lastSms\":\""+jsonEscape(t.lastSms)+"\",\"lastError\":\""+jsonEscape(t.lastError)+"\",\"testMode\":"+(cfg.testMode?"true":"false")+"}";return s;}
+  s+="\"lastSms\":\""+jsonEscape(t.lastSms)+"\",\"lastError\":\""+jsonEscape(t.lastError)+"\",";
+  s+=String("\"cancelPressed\":")+(digitalRead(PIN_CANCEL)==LOW?"true":"false")+",\"buzzerCommanded\":"+(buzzerOn?"true":"false")+",\"testMode\":"+(cfg.testMode?"true":"false")+"}";return s;}
 
 const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>CrashGuard</title><style>
-:root{--bg:#0f172a;--card:#1b2336;--muted:#94a3b8;--line:#475569;--text:#f8fafc;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% 0,#20365a 0,transparent 35%),var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.brand{font-size:1.3rem;font-weight:800}.muted{color:var(--muted)}nav{display:flex;overflow:auto;gap:8px;margin:18px 0}button,.tab,input,select{min-height:44px;border-radius:8px;border:1px solid var(--line);font:inherit}.tab,button{background:#27344c;color:var(--text);padding:10px 14px;cursor:pointer}.tab.active,button.primary{background:var(--ok);color:#07150d;border-color:transparent;font-weight:700}button.danger{background:var(--bad);color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:rgba(27,35,54,.94);border:1px solid var(--line);border-radius:12px;padding:16px}.metric{font:700 1.25rem ui-monospace,monospace}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:7px}.dot.ok{background:var(--ok)}section{display:none}section.active{display:block}label{display:block;margin:10px 0 4px;font-weight:650}input,select{width:100%;padding:9px 11px;background:#111a2c;color:var(--text)}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}.notice{padding:12px;border-left:4px solid var(--warn);background:#2e291c;margin:12px 0}.toast{position:fixed;right:18px;bottom:18px;max-width:330px;padding:12px;background:#111827;border:1px solid var(--line);border-radius:8px;display:none}.logs{max-height:430px;overflow:auto;font:13px/1.6 ui-monospace,monospace}.hide{display:none}@media(max-width:600px){main{padding:12px}.top{align-items:flex-start}.grid{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+:root{--bg:#0f172a;--card:#1b2336;--muted:#94a3b8;--line:#475569;--text:#f8fafc;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% 0,#20365a 0,transparent 35%),var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.brand{font-size:1.3rem;font-weight:800}.muted{color:var(--muted)}nav{display:flex;overflow:auto;gap:8px;margin:18px 0}button,.tab,input,select{min-height:44px;border-radius:8px;border:1px solid var(--line);font:inherit}.tab,button{background:#27344c;color:var(--text);padding:10px 14px;cursor:pointer}.tab.active,button.primary{background:var(--ok);color:#07150d;border-color:transparent;font-weight:700}button.danger{background:var(--bad);color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:rgba(27,35,54,.94);border:1px solid var(--line);border-radius:12px;padding:16px}.metric{font:700 1.25rem ui-monospace,monospace}.health{margin-top:7px}.health.ok{color:#86efac}.health.warn{color:#fcd34d}.health.bad{color:#fca5a5}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:7px}.dot.ok{background:var(--ok)}section{display:none}section.active{display:block}label{display:block;margin:10px 0 4px;font-weight:650}input,select{width:100%;padding:9px 11px;background:#111a2c;color:var(--text)}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}.notice{padding:12px;border-left:4px solid var(--warn);background:#2e291c;margin:12px 0}.toast{position:fixed;right:18px;bottom:18px;max-width:330px;padding:12px;background:#111827;border:1px solid var(--line);border-radius:8px;display:none}.logs{max-height:430px;overflow:auto;font:13px/1.6 ui-monospace,monospace}.hide{display:none}@media(max-width:600px){main{padding:12px}.top{align-items:flex-start}.grid{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 </style></head><body><main><div class=top><div><div class=brand>CrashGuard</div><div class=muted>Local safety console Â· HTTP is not encrypted</div></div><button id=logout class=hide>Log out</button></div>
 <div id=auth class=card><h1 id=authTitle>Administrator access</h1><p id=authHelp class=muted></p><label for=password>Password</label><input id=password type=password autocomplete=current-password minlength=10 maxlength=64><div class=actions><button class=primary onclick=login()>Continue</button></div></div>
 <div id=app class=hide><nav aria-label="Portal sections"><button class="tab active" data-tab=dash>Dashboard</button><button class=tab data-tab=sensor>Sensor</button><button class=tab data-tab=settings>Settings</button><button class=tab data-tab=contacts>Contacts</button><button class=tab data-tab=logs>Logs</button></nav>
-<section id=dash class=active><div class=grid><div class=card><span id=stateDot class=dot></span>System state<div id=state class=metric>â€”</div><div id=countdown class=muted></div></div><div class=card>MPU6050<div id=mpu class=metric>â€”</div><div id=cal class=muted></div></div><div class=card>GPS<div id=gps class=metric>â€”</div><div id=gpsMeta class=muted></div></div><div class=card>SIM800L<div id=gsm class=metric>â€”</div><div id=gsmMeta class=muted></div><div id=sms class=muted></div><button onclick=act('/api/gsm/check')>Refresh modem checks</button></div><div class=card>Access point<div id=wifi class=metric>â€”</div><div id=uptime class=muted></div></div><div class=card>Last diagnostic<div id=error class=metric>â€”</div></div></div><div class=notice>Prototype only. A green status means the latest check passed; it does not certify crash detection, SMS delivery, or rider safety.</div></section>
+<section id=dash class=active><div class=grid><div class=card><span id=stateDot class=dot></span>System state<div id=state class=metric>â€”</div><div id=countdown class=muted></div></div><div class=card>MPU6050<div id=mpu class="metric health" aria-live=polite>â€”</div><div id=cal class=muted></div></div><div class=card>GPS<div id=gps class="metric health" aria-live=polite>â€”</div><div id=gpsMeta class=muted></div></div><div class=card>SIM800L<div id=gsm class="metric health" aria-live=polite>â€”</div><div id=gsmMeta class=muted></div><div id=sms class=muted></div><button onclick=act('/api/gsm/check')>Refresh modem checks</button></div><div class=card>Access point<div id=wifi class="metric health" aria-live=polite>â€”</div><div id=uptime class=muted></div></div><div class=card>Cancel button<div id=buttonHealth class="metric health" aria-live=polite>Checking</div><div class=muted>Live GPIO input</div></div><div class=card>Buzzer output<div id=buzzerHealth class="metric health" aria-live=polite>Checking</div><div class=muted>Command state only; sound is not electrically verified</div></div><div class=card>Last diagnostic<div id=error class=metric>â€”</div></div></div><div class=notice>Prototype only. A green status means the latest check passed; it does not certify crash detection, SMS delivery, or rider safety.</div></section>
 <section id=sensor><div class=grid><div class=card>Acceleration (m/sÂ²)<div id=acc class=metric>â€”</div><div id=amag class=muted></div></div><div class=card>Angular velocity (Â°/s)<div id=gyro class=metric>â€”</div><div id=gmag class=muted></div></div><div class=card>Calibration<div id=calProgress class=metric>â€”</div><p class=muted>Keep the installed sensor still and level. Bias calibration does not tune crash thresholds.</p><div class=actions><button onclick=act('/api/calibrate')>Start calibration</button><button onclick=act('/api/calibration/reset')>Reset offsets</button></div></div><div class=card>Safe simulation<p class=muted>Exercises detection and countdown. It never sends an SMS while test mode is enabled.</p><button onclick=act('/api/simulate')>Simulate candidate</button></div></div></section>
 <section id=settings><div class=card><h2>Crash detection</h2><div class=grid><div><label for=accel>Acceleration threshold (g)</label><input id=accel type=number min=1.5 max=16 step=.1></div><div><label for=gyroT>Angular threshold (Â°/s)</label><input id=gyroT type=number min=50 max=2000 step=10></div><div><label for=persist>Persistence (ms)</label><input id=persist type=number min=100 max=3000></div><div><label for=count>Countdown (s)</label><input id=count type=number min=5 max=120></div><div><label for=rate>Sample rate (Hz)</label><input id=rate type=number min=20 max=100></div><div><label for=cooldown>Cooldown (s)</label><input id=cooldown type=number min=30 max=3600></div></div><label><input id=both type=checkbox style="width:auto;min-height:auto"> Require both acceleration and rotation thresholds</label><label><input id=test type=checkbox style="width:auto;min-height:auto"> Test mode (SMS disabled)</label><div class=actions><button class=primary onclick=saveSettings()>Save settings</button></div></div></section>
 <section id=contacts><div class=card><h2>Emergency contacts</h2><p class=muted>Use E.164 format such as +639171234567. Saving never sends a message.</p><div id=contactRows></div><div class=actions><button class=primary onclick=saveContacts()>Save contacts</button><button onclick=testSms()>Send one test SMS</button></div></div></section>
 <section id=logs><div class=card><h2>Recent events</h2><div id=logList class=logs>Loadingâ€¦</div></div></section></div></main><div id=toast class=toast role=status aria-live=polite></div>
-<script>let csrf='',live=null,setup=false;const $=id=>document.getElementById(id),toast=m=>{let x=$('toast');x.textContent=m;x.style.display='block';setTimeout(()=>x.style.display='none',3500)};async function api(url,opt={}){opt.headers={...(opt.headers||{}),'X-CSRF-Token':csrf};let r=await fetch(url,opt),j=await r.json().catch(()=>({error:'invalid response'}));if(!r.ok)throw Error(j.error||'Request failed');return j}async function boot(){let r=await fetch('/api/session'),j=await r.json();setup=j.setupRequired;$('authTitle').textContent=setup?'First-time setup':'Administrator access';$('authHelp').textContent=setup?'Create a unique password (10â€“64 characters). Record it securely; recovery requires holding the physical cancel button during boot.':'Sign in to change safety settings.';if(j.authenticated)showApp(j.csrf)}async function login(){try{let j=await api(setup?'/api/setup':'/api/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'password='+encodeURIComponent($('password').value)});showApp(j.csrf)}catch(e){toast(e.message)}}function showApp(c){csrf=c;$('auth').classList.add('hide');$('app').classList.remove('hide');$('logout').classList.remove('hide');loadConfig();refresh();live=setInterval(refresh,1000)}$('logout').onclick=async()=>{await api('/api/logout',{method:'POST'});location.reload()};document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,section').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.tab).classList.add('active');if(b.dataset.tab==='logs')loadLogs()});async function refresh(){try{let s=await api('/api/status');$('state').textContent=s.state;$('stateDot').className='dot '+(s.state==='MONITORING'?'ok':'');$('countdown').textContent=s.countdown?'Alert in '+s.countdown+' s':(s.testMode?'Test mode':'Live alerts');$('mpu').textContent=s.mpuDetected?(s.mpuReadOk?'Detected Â· reading':'Detected Â· read fault'):'Not detected';$('cal').textContent=s.calibrated?'Offsets saved':'Not calibrated';$('gps').textContent=s.gpsFix?'Valid fix':(s.gpsDetected?'Detected Â· no fix':'Not detected');$('gpsMeta').textContent=s.gpsFix?s.lat.toFixed(6)+', '+s.lng.toFixed(6)+' Â· '+s.satellites+' satellites':'Needs clear sky';$('gsm').textContent=s.gsmDetected?(s.smsReady?'Detected Â· SMS ready':'Detected Â· initializing'):'Not detected';$('gsmMeta').textContent='SIM '+(s.simReady?'ready':'not ready')+' Â· network '+(s.registered?'registered':'not registered')+' Â· CSQ '+s.signal+(s.operatorName?' Â· '+s.operatorName:'');$('sms').textContent=s.lastSms;$('wifi').textContent=s.clients+' connected';$('uptime').textContent='Uptime '+s.uptime+' s Â· firmware '+s.firmware;$('error').textContent=s.lastError;$('acc').textContent=`X ${s.ax} Â· Y ${s.ay} Â· Z ${s.az}`;$('amag').textContent=s.accelG+' g'+(s.saturated?' Â· SATURATED':'');$('gyro').textContent=`X ${s.gx} Â· Y ${s.gy} Â· Z ${s.gz}`;$('gmag').textContent=s.gyroDps+' Â°/s Â· '+s.sampleHz+' Hz';$('calProgress').textContent=s.calibrationRunning?s.calibrationProgress+'%':'Idle'}catch(e){toast('Connection lost')}}async function act(url){try{let j=await api(url,{method:'POST'});toast(j.message)}catch(e){toast(e.message)}}async function loadConfig(){let c=await api('/api/config');['accel','persist','count','rate','cooldown'].forEach(k=>$(k).value=c[k]);$('gyroT').value=c.gyro;$('both').checked=c.both;$('test').checked=c.test;let h='';c.contacts.forEach((x,i)=>h+=`<div class=grid><div><label for=cn${i}>Name ${i+1}</label><input id=cn${i} value="${esc(x.name)}" maxlength=30></div><div><label for=cp${i}>Phone ${i+1}</label><input id=cp${i} value="${esc(x.phone)}" maxlength=16 inputmode=tel></div><div><label for=ce${i}>Alert enabled</label><select id=ce${i}><option value=1 ${x.enabled?'selected':''}>Yes</option><option value=0 ${!x.enabled?'selected':''}>No</option></select></div></div>`);$('contactRows').innerHTML=h}function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function saveSettings(){let b=new URLSearchParams({accel:$('accel').value,gyro:$('gyroT').value,persist:$('persist').value,count:$('count').value,rate:$('rate').value,cooldown:$('cooldown').value,both:$('both').checked?1:0,test:$('test').checked?1:0});try{let j=await api('/api/config',{method:'POST',body:b});toast(j.message)}catch(e){toast(e.message)}}async function saveContacts(){let b=new URLSearchParams();for(let i=0;i<3;i++){b.set('cn'+i,$('cn'+i).value);b.set('cp'+i,$('cp'+i).value);b.set('ce'+i,$('ce'+i).value)}try{let j=await api('/api/contacts',{method:'POST',body:b});toast(j.message)}catch(e){toast(e.message)}}async function testSms(){let n=prompt('Contact number (1â€“3) to test:');if(n)try{let j=await api('/api/sms/test',{method:'POST',body:new URLSearchParams({index:n-1})});toast(j.message)}catch(e){toast(e.message)}}async function loadLogs(){let j=await api('/api/logs');$('logList').innerHTML=j.logs.map(x=>`<div>${x.time}s Â· ${esc(x.text)}</div>`).join('')||'No events' }boot();</script></body></html>)HTML";
+<script>let csrf='',live=null,setup=false;const $=id=>document.getElementById(id),toast=m=>{let x=$('toast');x.textContent=m;x.style.display='block';setTimeout(()=>x.style.display='none',3500)};async function api(url,opt={}){opt.headers={...(opt.headers||{}),'X-CSRF-Token':csrf};let r=await fetch(url,opt),j=await r.json().catch(()=>({error:'invalid response'}));if(!r.ok)throw Error(j.error||'Request failed');return j}async function boot(){let r=await fetch('/api/session'),j=await r.json();setup=j.setupRequired;$('authTitle').textContent=setup?'First-time setup':'Administrator access';$('authHelp').textContent=setup?'Create a unique password (10â€“64 characters). Record it securely; recovery requires holding the physical cancel button during boot.':'Sign in to change safety settings.';if(j.authenticated)showApp(j.csrf)}async function login(){try{let j=await api(setup?'/api/setup':'/api/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'password='+encodeURIComponent($('password').value)});showApp(j.csrf)}catch(e){toast(e.message)}}function showApp(c){csrf=c;$('auth').classList.add('hide');$('app').classList.remove('hide');$('logout').classList.remove('hide');loadConfig();refresh();live=setInterval(refresh,1000)}$('logout').onclick=async()=>{await api('/api/logout',{method:'POST'});location.reload()};document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,section').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.tab).classList.add('active');if(b.dataset.tab==='logs')loadLogs()});const setHealth=(id,text,level)=>{let e=$(id);e.textContent=text;e.className='metric health '+level};async function refresh(){try{let s=await api('/api/status');$('state').textContent=s.state;$('stateDot').className='dot '+(s.state==='MONITORING'?'ok':'');$('countdown').textContent=s.countdown?'Alert in '+s.countdown+' s':(s.testMode?'Test mode':'Live alerts');$('mpu').textContent=s.mpuDetected?(s.mpuReadOk?'Detected Â· reading':'Detected Â· read fault'):'Not detected';$('cal').textContent=s.calibrated?'Offsets saved':'Not calibrated';$('gps').textContent=s.gpsFix?'Valid fix':(s.gpsDetected?'Detected Â· no fix':'Not detected');$('gpsMeta').textContent=s.gpsFix?s.lat.toFixed(6)+', '+s.lng.toFixed(6)+' Â· '+s.satellites+' satellites':'Needs clear sky';$('gsm').textContent=s.gsmDetected?(s.smsReady?'Detected Â· SMS ready':'Detected Â· initializing'):'Not detected';$('gsmMeta').textContent='SIM '+(s.simReady?'ready':'not ready')+' Â· network '+(s.registered?'registered':'not registered')+' Â· CSQ '+s.signal+(s.operatorName?' Â· '+s.operatorName:'');setHealth('mpu',s.mpuDetected?(s.mpuReadOk?'RUNNING':'READ FAULT'):'NOT DETECTED',s.mpuDetected&&s.mpuReadOk?'ok':(s.mpuDetected?'warn':'bad'));setHealth('gps',s.gpsFix?'RUNNING · FIXED':(s.gpsDetected?'RECEIVING · NO FIX':'NOT DETECTED'),s.gpsFix?'ok':(s.gpsDetected?'warn':'bad'));setHealth('gsm',s.gsmDetected?(s.smsReady&&s.simReady&&s.registered?'RUNNING · SMS READY':'DETECTED · NOT READY'):'NOT DETECTED',s.gsmDetected&&s.smsReady&&s.simReady&&s.registered?'ok':(s.gsmDetected?'warn':'bad'));setHealth('wifi','RUNNING · '+s.clients+' CONNECTED','ok');setHealth('buttonHealth',s.cancelPressed?'PRESSED':'READY',s.cancelPressed?'warn':'ok');setHealth('buzzerHealth',s.buzzerCommanded?'ACTIVE':'STANDBY',s.buzzerCommanded?'warn':'ok');$('sms').textContent=s.lastSms;$('uptime').textContent='Uptime '+s.uptime+' s Â· firmware '+s.firmware;$('error').textContent=s.lastError;$('acc').textContent=`X ${s.ax} Â· Y ${s.ay} Â· Z ${s.az}`;$('amag').textContent=s.accelG+' g'+(s.saturated?' Â· SATURATED':'');$('gyro').textContent=`X ${s.gx} Â· Y ${s.gy} Â· Z ${s.gz}`;$('gmag').textContent=s.gyroDps+' Â°/s Â· '+s.sampleHz+' Hz';$('calProgress').textContent=s.calibrationRunning?s.calibrationProgress+'%':'Idle'}catch(e){toast('Connection lost')}}async function act(url){try{let j=await api(url,{method:'POST'});toast(j.message)}catch(e){toast(e.message)}}async function loadConfig(){let c=await api('/api/config');['accel','persist','count','rate','cooldown'].forEach(k=>$(k).value=c[k]);$('gyroT').value=c.gyro;$('both').checked=c.both;$('test').checked=c.test;let h='';c.contacts.forEach((x,i)=>h+=`<div class=grid><div><label for=cn${i}>Name ${i+1}</label><input id=cn${i} value="${esc(x.name)}" maxlength=30></div><div><label for=cp${i}>Phone ${i+1}</label><input id=cp${i} value="${esc(x.phone)}" maxlength=16 inputmode=tel></div><div><label for=ce${i}>Alert enabled</label><select id=ce${i}><option value=1 ${x.enabled?'selected':''}>Yes</option><option value=0 ${!x.enabled?'selected':''}>No</option></select></div></div>`);$('contactRows').innerHTML=h}function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function saveSettings(){let b=new URLSearchParams({accel:$('accel').value,gyro:$('gyroT').value,persist:$('persist').value,count:$('count').value,rate:$('rate').value,cooldown:$('cooldown').value,both:$('both').checked?1:0,test:$('test').checked?1:0});try{let j=await api('/api/config',{method:'POST',body:b});toast(j.message)}catch(e){toast(e.message)}}async function saveContacts(){let b=new URLSearchParams();for(let i=0;i<3;i++){b.set('cn'+i,$('cn'+i).value);b.set('cp'+i,$('cp'+i).value);b.set('ce'+i,$('ce'+i).value)}try{let j=await api('/api/contacts',{method:'POST',body:b});toast(j.message)}catch(e){toast(e.message)}}async function testSms(){let n=prompt('Contact number (1â€“3) to test:');if(n)try{let j=await api('/api/sms/test',{method:'POST',body:new URLSearchParams({index:n-1})});toast(j.message)}catch(e){toast(e.message)}}async function loadLogs(){let j=await api('/api/logs');$('logList').innerHTML=j.logs.map(x=>`<div>${x.time}s Â· ${esc(x.text)}</div>`).join('')||'No events' }boot();</script></body></html>)HTML";
 
 void sendPage(){server.send_P(200,"text/html",PAGE);}
 void setupRoutes(){
-#ifdef CRASHGUARD_ESP8266
   server.collectHeaders("Cookie","X-CSRF-Token");
-#else
-  const char *headers[]={"Cookie","X-CSRF-Token"};server.collectHeaders(headers,2);
-#endif
   server.on("/",HTTP_GET,sendPage); server.on("/generate_204",HTTP_ANY,sendPage);server.on("/hotspot-detect.html",HTTP_ANY,sendPage);server.on("/connecttest.txt",HTTP_ANY,sendPage);server.on("/ncsi.txt",HTTP_ANY,sendPage);
   server.on("/api/session",HTTP_GET,[]{bool a=authenticated();server.send(200,"application/json","{\"setupRequired\":"+String(hasPassword()?"false":"true")+",\"authenticated\":"+String(a?"true":"false")+",\"csrf\":\""+(a?csrfToken:"")+"\"}");});
   server.on("/api/setup",HTTP_POST,[]{if(hasPassword()){server.send(409,"application/json","{\"error\":\"already_configured\"}");return;}if(!setPassword(server.arg("password"))){server.send(422,"application/json","{\"error\":\"password_must_be_10_to_64_characters\"}");return;}sessionToken=randomHex(24);csrfToken=randomHex(16);sessionLastSeen=millis();server.sendHeader("Set-Cookie","CGSESSION="+sessionToken+"; HttpOnly; SameSite=Strict");server.send(200,"application/json","{\"csrf\":\""+csrfToken+"\"}");logEvent("First-time administrator setup completed");});
@@ -366,18 +277,10 @@ void setupRoutes(){
 }
 
 void setup(){
-#ifdef CRASHGUARD_ESP8266
   Serial.begin(9600); // dedicated to SIM800L; do not open USB Serial Monitor
-#else
-  Serial.begin(115200);
-#endif
   pinMode(PIN_BUZZER,OUTPUT);digitalWrite(PIN_BUZZER,LOW);pinMode(PIN_CANCEL,INPUT_PULLUP);loadConfig();logEvent("Boot firmware "+String(FW_VERSION));changeState(HARDWARE_CHECK,"initializing");
   Wire.begin(PIN_MPU_SDA,PIN_MPU_SCL);t.mpuDetected=mpu.begin(0x68,&Wire);if(t.mpuDetected){mpu.setAccelerometerRange(MPU6050_RANGE_16_G);mpu.setGyroRange(MPU6050_RANGE_2000_DEG);mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);logEvent("MPU6050 detected");}else setError("MPU6050 not detected at 0x68");
-#ifdef CRASHGUARD_ESP8266
   GPS_UART.begin(9600);
-#else
-  GPS_UART.begin(9600,SERIAL_8N1,PIN_GPS_RX,PIN_GPS_TX);GSM_UART.begin(9600,SERIAL_8N1,PIN_GSM_RX,PIN_GSM_TX);
-#endif
   WiFi.mode(WIFI_AP);WiFi.softAP(cfg.apSsid.c_str());delay(50);dns.start(DNS_PORT,"*",WiFi.softAPIP());setupRoutes();server.begin();logEvent("Setup AP ready at "+WiFi.softAPIP().toString());
   // Physical recovery: hold cancel during boot for 8 seconds to erase only admin password/session.
   if(digitalRead(PIN_CANCEL)==LOW){uint32_t held=millis();while(digitalRead(PIN_CANCEL)==LOW&&millis()-held<8000){delay(10);}if(millis()-held>=8000){resetAdminPassword();logEvent("Administrator password reset by physical hold");}}

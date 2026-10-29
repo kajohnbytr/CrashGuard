@@ -91,14 +91,14 @@ The name “ESP32-C3 Super Mini” covers multiple seller revisions. This projec
 | MPU6050 | SDA | GPIO5 | Bidirectional | 3.3 V | I²C pull-ups must terminate at 3.3 V |
 | MPU6050 | SCL | GPIO6 | ESP → sensor | 3.3 V | Common GND required |
 | NEO-6M | TX | GPIO3 (GPS RX) | GPS → ESP | Verify ≤3.3 V | Required for NMEA |
-| NEO-6M | RX | GPIO4 (GPS TX) | ESP → GPS | 3.3 V | Optional unless configuring GPS |
+| NEO-6M | RX | Not connected | ESP → GPS | — | Firmware uses receive-only GPS to save one GPIO |
 | SIM800L | TXD | GPIO0 (GSM RX) | GSM → ESP | Typically ~2.8 V | Confirm carrier board logic |
 | SIM800L | RXD | GPIO1 (GSM TX) | ESP → GSM | Reduce 3.3 V if the module lacks adaptation | Use divider/level shifter per module data |
 | Buzzer driver | IN/gate/base | GPIO7 | ESP → driver | 3.3 V | Use transistor/MOSFET, resistor, and flyback diode if inductive |
 | Cancel button | Switch | GPIO10 to GND | Input | 3.3 V pull-up | Active low; also password recovery when held 8 s at boot |
 | Programming | USB D− / D+ | Board USB / GPIO18/19 | Bidirectional | USB | Do not reuse GPIO18/19 |
 
-The C3 GPIO matrix permits UART signal remapping. Firmware uses hardware UART0 on GPIO3/4 for GPS and UART1 on GPIO0/1 for GSM, while console logging is native USB CDC. Select **USB CDC On Boot: Enabled**.
+The C3 GPIO matrix permits UART signal remapping. Firmware uses hardware UART0 receive-only on GPIO3 for GPS and UART1 on GPIO0/1 for GSM, while console logging is native USB CDC. GPIO4 remains spare. Select **USB CDC On Boot: Enabled**.
 
 ### Power connections
 
@@ -140,9 +140,17 @@ Reproducible PlatformIO environments are in `platformio.ini`:
 - TinyGPSPlus 1.1.0
 - Built into Arduino-ESP32: WiFi, WebServer, DNSServer, Preferences, Wire, HardwareSerial, mbedTLS
 
-PlatformIO: install VS Code + PlatformIO and select `esp32-wroom-32` for the WROOM board or `esp32-c3-super-mini` for the C3 board before **Build** and **Upload**. Arduino IDE: install the Espressif ESP32 board package, “Adafruit MPU6050” 2.2.9 and “TinyGPSPlus” 1.1.0 with Library Manager; open `SmartHelmet/SmartHelmet.ino` and select the target matching the actual board. Enable USB CDC at boot for ESP32-C3 only. Compile before wiring modules.
+PlatformIO: install VS Code + PlatformIO and select the environment matching the connected board before **Build** and **Upload**. Arduino IDE: install the applicable Espressif board package, “Adafruit MPU6050” 2.2.9, and “TinyGPSPlus” 1.1.0 with Library Manager. Open only the dedicated sketch for the target board. Enable USB CDC at boot for ESP32-C3 only. Compile before wiring modules.
 
-The source is [SmartHelmet/SmartHelmet.ino](SmartHelmet/SmartHelmet.ino). No credentials or phone numbers are compiled into it.
+Each controller has an independent sketch with its own libraries, pins, serial configuration, persistence implementation, and startup behavior:
+
+| Controller | PlatformIO environment | Dedicated sketch |
+|---|---|---|
+| ESP32-C3 Super Mini | `esp32-c3-super-mini` | [SmartHelmetESP32C3/SmartHelmetESP32C3.ino](SmartHelmetESP32C3/SmartHelmetESP32C3.ino) |
+| ESP32-WROOM-32 | `esp32-wroom-32` | [SmartHelmetESP32WROOM/SmartHelmetESP32WROOM.ino](SmartHelmetESP32WROOM/SmartHelmetESP32WROOM.ino) |
+| ESP8266 NodeMCU | `nodemcuv2` | [SmartHelmetESP8266/SmartHelmetESP8266.ino](SmartHelmetESP8266/SmartHelmetESP8266.ino) |
+
+No credentials or phone numbers are compiled into these sketches.
 
 ## 4. Architecture and state machine
 

@@ -1,0 +1,137 @@
+CRASHGUARD - ESP32-C3 SUPER MINI WIRING
+=======================================
+
+Target: ESP32-C3 Super Mini (common board exposing GPIO0-GPIO10)
+Firmware environment: esp32-c3-super-mini
+Firmware build: platformio run -e esp32-c3-super-mini
+
+This pin plan uses only seven GPIOs. GPS is receive-only, leaving GPIO4 spare.
+Because seller revisions vary, verify the labels and schematic of your exact
+board before connecting power.
+
+COMPACT ASSEMBLY
+----------------
+
+Do not use a solderless breadboard in the helmet. Use either:
+
+- a small custom carrier PCB (preferred), or
+- a soldered wire harness with insulated junctions and locking connectors.
+
+The 3V3 and GND pins are shared rails, not one-device-only connections. Split
+them at a tiny soldered distribution point or on the carrier PCB. Do not try
+to force several loose wires into one ESP32 header hole.
+
+Recommended compact power topology:
+
+  protected battery / documented power-path circuit
+                 |
+                 +--> regulated system rail --> ESP32-C3 5V/VIN*
+                 |                         +--> GPS VCC*
+                 |
+                 +--> dedicated 3.4-4.4 V, >=2 A modem regulator
+                                           +--> SIM800L VCC
+
+  ESP32-C3 3V3 ----------------------------+--> MPU6050 VCC
+
+  common ground junction ------------------+--> ESP32-C3 GND
+                                           +--> MPU6050 GND
+                                           +--> GPS GND
+                                           +--> buzzer-driver GND
+                                           +--> modem regulator GND
+                                           +--> SIM800L GND
+
+* Verify the exact board and GPS breakout. A pin marked 5V/VBUS is not always
+  a wide-range VIN input. Never connect a raw Li-ion cell to 3V3.
+
+Keep the battery-to-modem-regulator and regulator-to-SIM800L wires short and
+thicker than the signal wiring. Place the modem bulk capacitor directly beside
+the SIM800L. Route the MPU6050 wiring away from the modem power and antenna.
+
+For serviceability, use small locking connectors such as JST-PH only where
+their current rating is adequate. The SIM800L supply path may require a higher-
+current connector than the sensor connections. Add strain relief and fully
+insulate every soldered junction with heat-shrink tubing.
+
+
+SIGNAL WIRING
+-------------
+
+ESP32-C3 SUPER MINI      PERIPHERAL
+-------------------      ----------------------------------------------
+GPIO5                    MPU6050 SDA
+GPIO6                    MPU6050 SCL
+3V3                      MPU6050 VCC (only for a 3.3 V-safe breakout)
+GND                      MPU6050 GND
+
+GPIO3 (UART0 RX)         GPS TX
+Not connected            GPS RX (not required for normal NMEA reception)
+Suitable supply          GPS VCC (verify the exact breakout)
+GND                      GPS GND
+
+GPIO0 (UART1 RX)         SIM800L TXD
+GPIO1 (UART1 TX)         SIM800L RXD (level adaptation may be required)
+GND                      SIM800L GND
+
+GPIO7                    Buzzer transistor/MOSFET driver input
+GND                      Buzzer driver ground
+
+GPIO10                   One side of cancel button
+GND                      Other side of cancel button
+
+USB connector            Programming and native USB Serial Monitor
+GPIO4                    Spare
+
+
+PIN USE SUMMARY
+---------------
+
+Used:       GPIO0, GPIO1, GPIO3, GPIO5, GPIO6, GPIO7, GPIO10
+Spare:      GPIO4
+Avoid:      GPIO2, GPIO8, GPIO9 (boot-strapping pins)
+Reserved:   GPIO18, GPIO19 (native USB D-/D+; usually not broken out)
+Do not use: GPIO12-GPIO17 (normally connected to flash on ESP32-C3)
+
+Do not attach external circuits to GPIO2, GPIO8, or GPIO9 unless their reset
+levels are fully controlled. GPIO9 is commonly connected to the BOOT button.
+
+
+POWER AND LEVEL REQUIREMENTS
+----------------------------
+
+1. ESP32-C3 GPIO is 3.3 V only and is not 5 V tolerant.
+
+2. Power the SIM800L from its own stable supply. A bare module normally needs
+   about 3.4-4.4 V and current bursts near 2 A. Do not power it from the C3's
+   3V3 pin or from an unverified 5 V source. Put suitable low-ESR bulk
+   capacitance close to the modem (commonly 1000-2200 uF plus 100 nF).
+
+3. Join ESP32, MPU6050, GPS, SIM800L supply, and buzzer-driver grounds. Keep
+   the SIM800L power and return wiring short and heavy.
+
+4. Check the SIM800L carrier's UART levels. Its TXD is commonly safe for a
+   3.3 V input, but the ESP32 GPIO1-to-SIM800L RXD path may require a divider
+   or proper level shifter. Follow the exact module documentation.
+
+5. Use a transistor or logic-level MOSFET driver for the buzzer. Do not power
+   a buzzer directly from GPIO7. Add a flyback diode for an inductive load.
+
+6. Confirm that GPS TX and the MPU6050 I2C pull-ups never exceed 3.3 V.
+
+
+FIRST POWER-UP
+--------------
+
+[ ] Disconnect power while wiring.
+[ ] Confirm the exact board pin labels and USB connector orientation.
+[ ] Meter all supply rails and polarity before connecting modules.
+[ ] Initially leave the SIM800L supply disconnected.
+[ ] Build/upload the esp32-c3-super-mini PlatformIO environment.
+[ ] Use 115200 baud and enable USB CDC on boot.
+[ ] Verify MPU6050 and GPS operation first.
+[ ] Connect the separately powered SIM800L only after checking common ground,
+    UART levels, antenna, SIM, and modem supply stability.
+
+The first-boot Wi-Fi network is "SmartHelmet-Setup".
+Open http://192.168.4.1/ while connected to that network.
+
+This is a bench prototype, not certified safety equipment.
