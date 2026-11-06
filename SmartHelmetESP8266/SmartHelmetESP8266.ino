@@ -40,6 +40,7 @@ static const uint8_t LOG_CAPACITY = 40;
 static const uint32_t GPS_FRESH_MS = 120000;
 static const uint32_t GPS_ACQUIRE_MS = 30000;
 static const uint32_t SESSION_TTL_MS = 30UL * 60UL * 1000UL;
+static const uint32_t HARDWARE_REPORT_INTERVAL_MS = 60UL * 1000UL;
 
 SoftwareSerial GPS_UART(PIN_GPS_RX, PIN_GPS_TX);
 #define GSM_UART Serial
@@ -92,6 +93,7 @@ SmsState smsState=SMS_IDLE;
 uint32_t stateSince=0, lastSampleMs=0, candidateSince=0, cooldownUntil=0;
 uint32_t smsDeadline=0, buzzerToggleMs=0, lastGsmProbe=0;
 uint32_t lastMpuRetry=0;
+uint32_t lastHardwareReportMs=0;
 bool buzzerOn=false, candidateActive=false, simulatedCandidate=false;
 bool calibrationRunning=false; uint16_t calibrationSamples=0;
 double calAccSum[3]={0}, calGyroSum[3]={0}, calAccSq=0, calGyroSq=0;
@@ -128,6 +130,21 @@ bool elapsed(uint32_t since, uint32_t duration) { return (uint32_t)(millis()-sin
 bool validPhone(const String &p) { if(p.length()<8 || p.length()>16) return false;
   for(size_t i=0;i<p.length();i++) if(!isDigit(p[i]) && !(i==0 && p[i]=='+')) return false; return true; }
 float clampFloat(float v,float lo,float hi){return v<lo?lo:(v>hi?hi:v);} 
+
+void reportHardwareStatus() {
+  if(smsState!=SMS_IDLE||!elapsed(lastHardwareReportMs,HARDWARE_REPORT_INTERVAL_MS)) return;
+  lastHardwareReportMs=millis();
+  bool mpuRunning=t.mpuDetected&&t.mpuReadOk&&!elapsed(t.lastMpuMs,5000);
+  Serial.println("\n=== CrashGuard hardware status (uptime "+String(millis()/1000)+"s) ===");
+  Serial.println("MPU6050 : "+String(mpuRunning?"CONNECTED / RUNNING":(t.mpuDetected?"CONNECTED / NO RECENT DATA":"NOT DETECTED")));
+  Serial.println("NEO-6M  : "+String(t.gpsDetected?(t.gpsFix?"CONNECTED / VALID FIX":"CONNECTED / WAITING FOR FIX"):"NO SERIAL DATA"));
+  Serial.println("SIM800L : "+String(t.gsmDetected?(t.smsReady?"CONNECTED / SMS READY":"CONNECTED / NOT READY"):"NOT RESPONDING"));
+  Serial.println("SIM/network: "+String(t.simReady?"READY":"NOT READY")+", "+String(t.registered?"REGISTERED":"NOT REGISTERED")+", CSQ="+String(t.signal));
+  Serial.println("Buzzer  : CONFIGURED on GPIO "+String(PIN_BUZZER)+" (connection cannot be sensed)");
+  Serial.println("Cancel  : CONFIGURED on GPIO "+String(PIN_CANCEL)+", input="+String(digitalRead(PIN_CANCEL)==LOW?"PRESSED/LOW":"RELEASED/HIGH"));
+  Serial.println("System  : "+stateName(state)+", last error: "+t.lastError);
+  Serial.println("==================================================\n");
+}
 
 // ---------- Persistence ----------
 struct StoredContact { char name[31]; char phone[17]; uint8_t enabled; };
@@ -286,5 +303,5 @@ void setup(){
   if(digitalRead(PIN_CANCEL)==LOW){uint32_t held=millis();while(digitalRead(PIN_CANCEL)==LOW&&millis()-held<8000){delay(10);}if(millis()-held>=8000){resetAdminPassword();logEvent("Administrator password reset by physical hold");}}
   changeState(t.mpuDetected?MONITORING:FAULT,t.mpuDetected?"ready":"sensor required");
 }
-void loop(){dns.processNextRequest();server.handleClient();pollGps();pollGsm();sampleMpu();updateCrashWorkflow();delay(1);}
+void loop(){dns.processNextRequest();server.handleClient();pollGps();pollGsm();sampleMpu();updateCrashWorkflow();reportHardwareStatus();delay(1);}
 
